@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Secret Hitler</title>
+</head>
+<body>
+
+<h1>Secret Game</h1>
+
+<h2 id="role">Waiting...</h2>
+
+<ul id="players"></ul>
+
+<button onclick="toggleReady()">Ready / Not Ready</button>
+<button onclick="startGame()">Start Game (Host)</button>
+
+<hr>
+
+<h3 id="president"></h3>
+
+<div id="nomination" style="display:none">
+  <select id="nominees"></select>
+  <button onclick="nominate()">Nominate</button>
+</div>
+
+<div id="voting" style="display:none">
+  <button onclick="vote('JA')">JA</button>
+  <button onclick="vote('NEIN')">NEIN</button>
+</div>
+
+<h3 id="voteResult"></h3>
+
+<script>
+const ws = new WebSocket(`ws://${location.host}/ws`);
+
+let me = null;
+let currentPresident = null;
+
+/* ---------- helpers ---------- */
+
+function getPlayerName(players, id) {
+  const p = players.find(p => p.id === id);
+  return p ? p.name : id;
+}
+
+function renderNominees(players, president) {
+  const sel = document.getElementById("nominees");
+  sel.innerHTML = "";
+  players.forEach(p => {
+    if (p.id !== president && 
+        p.alive &&
+        p.id !== lastChancellor &&
+        p.id !== lastPresident
+    )
+    {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.text = p.name;
+      sel.appendChild(opt);
+    }
+  });
+}
+
+/* ---------- websocket ---------- */
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+
+  /* ----- STATE updates ----- */
+  if (data.type === "STATE") {
+    me = data.you;
+
+    // Role / lobby status
+    document.getElementById("role").innerText =
+      data.phase === "LOBBY"
+        ? `You are ${me.is_host ? "HOST" : "PLAYER"}`
+        : `Your role: ${me.role}`;
+
+    // Player list
+    const ul = document.getElementById("players");
+    ul.innerHTML = "";
+    data.players.forEach(p => {
+      const li = document.createElement("li");
+      li.innerText =
+        `${p.name} ${p.is_host ? "(HOST)" : ""} ${p.ready ? "✅" : "❌"}`;
+      ul.appendChild(li);
+    });
+
+    // Presidency
+    if (data.public && data.public.president) {
+      currentPresident = data.public.president;
+      const presidentName =
+        getPlayerName(data.players, currentPresident);
+
+      document.getElementById("president").innerText =
+        `President: ${presidentName}`;
+    }
+
+    // Nomination UI
+    if (data.phase === "NOMINATION") {
+      document.getElementById("nomination").style.display = "block";
+      document.getElementById("voting").style.display = "none";
+      renderNominees(data.players, currentPresident);
+    } else {
+      document.getElementById("nomination").style.display = "none";
+    }
+
+    // Voting UI
+    if (data.phase === "VOTING") {
+      document.getElementById("voting").style.display = "block";
+      document.getElementById("voteResult").innerText = "";
+    } else {
+      document.getElementById("voting").style.display = "none";
+    }
+  }
+
+  /* ----- VOTE RESULT reveal ----- */
+  if (data.type === "VOTE_RESULT") {
+    document.getElementById("voteResult").innerText =
+      `Vote Result: JA ${data.ja} / NEIN ${data.nein} — ${
+        data.passed ? "PASSED" : "FAILED"
+      }`;
+  }
+};
+
+/* ---------- actions ---------- */
+
+function toggleReady() {
+  if (!me) return;
+  ws.send(JSON.stringify({
+    action: "SET_READY",
+    value: !me.ready
+  }));
+}
+
+function startGame() {
+  ws.send(JSON.stringify({ action: "START_GAME" }));
+}
+
+function nominate() {
+  const nominee = document.getElementById("nominees").value;
+  ws.send(JSON.stringify({ action: "NOMINATE", value: nominee }));
+}
+
+function vote(value) {
+  ws.send(JSON.stringify({ action: "VOTE", value }));
+}
+</script>
+
+</body>
+</html>
